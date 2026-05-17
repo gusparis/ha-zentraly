@@ -21,10 +21,8 @@ PLATFORMS = [Platform.CLIMATE, Platform.BUTTON]
 _STORAGE_VERSION = 1
 
 # Proactive reset: send a reset command while the device is still ONLINE,
-# before the 12-hour SAS token expiry disconnects it.
-# At 11 h we reset with 1 h of margin — the device reboots (~30 s), reconnects
-# with a fresh token, and stays online indefinitely.
-_PROACTIVE_RESET_INTERVAL = timedelta(hours=4)
+# before the SAS token expires. Reset every 1 h for maximum reliability.
+_PROACTIVE_RESET_INTERVAL = timedelta(hours=1)
 
 # Reactive watchdog: last resort when the device already went offline.
 # Only works if the device can still receive commands (e.g. brief glitch, not
@@ -71,40 +69,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
             _last_good_state = {**state, "is_connected": True, "offline_since": None}
             await store.async_save(state)
-
-            # ----------------------------------------------------------------
-            # Proactive reset — the real fix for the 12-hour SAS token issue.
-            #
-            # The root cause: Azure IoT Hub SAS tokens expire after 12 hours.
-            # The ESP32 firmware doesn't renew them automatically, so the device
-            # silently disconnects and can't reconnect until physically rebooted.
-            #
-            # Solution: while the device is still reachable, send a reset at the
-            # 11-hour mark so it reboots with a fresh token (≈30 s downtime),
-            # then stays connected indefinitely — no manual restart needed.
-            # ----------------------------------------------------------------
-            since_last_reset = now - _last_reset_at
-            if since_last_reset >= _PROACTIVE_RESET_INTERVAL:
-                _LOGGER.warning(
-                    "Zentraly %s: proactive reset at %s (prevents 12-hour SAS token expiry disconnect)",
-                    device_id,
-                    since_last_reset,
-                )
-                try:
-                    accepted = await hass.async_add_executor_job(
-                        api.reset_device, device_id
-                    )
-                    _last_reset_at = now
-                    _LOGGER.warning(
-                        "Zentraly %s: proactive reset %s — device will be offline ~30 s then reconnect",
-                        device_id,
-                        "accepted" if accepted else "not confirmed",
-                    )
-                except Exception as reset_exc:  # noqa: BLE001
-                    _LOGGER.warning(
-                        "Zentraly %s: proactive reset failed: %s", device_id, reset_exc
-                    )
-
             return _last_good_state
 
         except ZentralyAuthError as exc:
