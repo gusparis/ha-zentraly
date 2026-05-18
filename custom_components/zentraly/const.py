@@ -7,8 +7,8 @@ LOGIN_URL = f"{BASE_URL}/Login"
 APP_URL = f"{BASE_URL}/App"
 IOT_COMMAND_URL = f"{BASE_URL}/IOTCommand/Run"
 
-DEFAULT_SCAN_INTERVAL = 30   # seconds — poll every 30s so physical thermostat changes
-                             # appear quickly in HA/HomeKit
+DEFAULT_SCAN_INTERVAL = 60   # seconds — poll every 60s balances responsiveness
+                             # with not stressing the thermostat's WiFi radio
 COMMAND_TIMEOUT = 15000  # ms, sent to the thermostat
 
 # thermostatMode values observed via MITM
