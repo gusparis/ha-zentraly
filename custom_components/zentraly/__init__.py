@@ -33,11 +33,20 @@ _MIN_RESET_INTERVAL = timedelta(hours=2)
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Zentraly from a config entry."""
-    api = ZentralyAPI(
-        email=entry.data[CONF_EMAIL],
-        password=entry.data[CONF_PASSWORD],
-    )
+    email = entry.data[CONF_EMAIL]
     device_id = entry.data[CONF_DEVICE_ID]
+
+    # Share a single ZentralyAPI instance per account (email) across all devices.
+    # This ensures only one login session is active at a time, avoiding conflicts
+    # where one device's login invalidates another's token.
+    domain_data = hass.data.setdefault(DOMAIN, {})
+    shared_apis = domain_data.setdefault("_shared_apis", {})
+    if email not in shared_apis:
+        shared_apis[email] = ZentralyAPI(
+            email=email,
+            password=entry.data[CONF_PASSWORD],
+        )
+    api = shared_apis[email]
 
     # Persist last known state across restarts
     store = Store(hass, _STORAGE_VERSION, f"{DOMAIN}_{device_id}_state")
@@ -162,7 +171,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await coordinator.async_config_entry_first_refresh()
 
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
+    domain_data[entry.entry_id] = {
         "api": api,
         "coordinator": coordinator,
         "device_id": device_id,
