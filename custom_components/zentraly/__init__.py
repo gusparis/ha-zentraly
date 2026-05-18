@@ -20,9 +20,7 @@ _LOGGER = logging.getLogger(__name__)
 PLATFORMS = [Platform.CLIMATE, Platform.BUTTON]
 _STORAGE_VERSION = 1
 
-# Proactive reset: send a reset command while the device is still ONLINE,
-# before the SAS token expires. Reset every 1 h for maximum reliability.
-_PROACTIVE_RESET_INTERVAL = timedelta(hours=1)
+_PROACTIVE_RESET_INTERVAL = timedelta(hours=2)
 
 # Reactive watchdog: last resort when the device already went offline.
 # Only works if the device can still receive commands (e.g. brief glitch, not
@@ -78,6 +76,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
             _last_good_state = {**state, "is_connected": True, "offline_since": None}
             await store.async_save(state)
+
+            # Proactive reset every 2 hours to prevent SAS token expiry disconnect.
+            since_last_reset = now - _last_reset_at
+            if since_last_reset >= _PROACTIVE_RESET_INTERVAL:
+                _LOGGER.warning(
+                    "Zentraly %s: proactive reset at %s (prevents SAS token expiry disconnect)",
+                    device_id,
+                    since_last_reset,
+                )
+                try:
+                    accepted = await hass.async_add_executor_job(
+                        api.reset_device, device_id
+                    )
+                    _last_reset_at = now
+                    _LOGGER.warning(
+                        "Zentraly %s: proactive reset %s",
+                        device_id,
+                        "accepted" if accepted else "not confirmed",
+                    )
+                except Exception as reset_exc:  # noqa: BLE001
+                    _LOGGER.warning("Zentraly %s: proactive reset failed: %s", device_id, reset_exc)
+
             return _last_good_state
 
         except ZentralyAuthError as exc:
