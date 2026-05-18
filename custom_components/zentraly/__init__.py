@@ -72,7 +72,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             return _last_good_state
 
         except ZentralyAuthError as exc:
-            raise ConfigEntryAuthFailed(str(exc)) from exc
+            # Transient auth failure (e.g. server-side session invalidation or
+            # rate-limit). Invalidate the token so the next cycle re-logins,
+            # and return the last known state rather than blocking the coordinator.
+            _LOGGER.warning("Zentraly %s: auth error (%s) — will re-login next cycle", device_id, exc)
+            api.invalidate_token()
+            if _last_good_state:
+                return {**_last_good_state, "is_connected": None}
+            raise UpdateFailed(str(exc)) from exc
 
         except ZentralyDeviceOfflineError as exc:
             now = datetime.now()
