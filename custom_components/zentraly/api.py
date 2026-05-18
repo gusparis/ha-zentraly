@@ -132,7 +132,7 @@ class ZentralyAPI:
         self._token = token_raw
         self._login_data = io_data  # cache for device discovery
         # JWT expires in ~100 years based on captured token (exp: 2121297637)
-        self._token_expires = datetime.now() + timedelta(minutes=10)
+        self._token_expires = datetime.now() + timedelta(minutes=20)
         return result
 
     def _auth_token_header(self) -> str:
