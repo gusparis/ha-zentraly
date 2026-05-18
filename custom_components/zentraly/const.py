@@ -7,8 +7,8 @@ LOGIN_URL = f"{BASE_URL}/Login"
 APP_URL = f"{BASE_URL}/App"
 IOT_COMMAND_URL = f"{BASE_URL}/IOTCommand/Run"
 
-DEFAULT_SCAN_INTERVAL = 60   # seconds — poll every 60s balances responsiveness
-                             # with not stressing the thermostat's WiFi radio
+DEFAULT_SCAN_INTERVAL = 300  # seconds (5 min) — less frequent polling prevents
+                             # ESP32 WiFi stack crashes from constant MQTT load
 COMMAND_TIMEOUT = 15000  # ms, sent to the thermostat
 
 # thermostatMode values observed via MITM
