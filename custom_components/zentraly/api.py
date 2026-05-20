@@ -36,6 +36,7 @@ from .const import (
     LOGIN_URL,
     MAX_TARGET_TEMP,
     MIN_TARGET_TEMP,
+    OFF_COMMAND_TEMP,
     OFF_TARGET_TEMP,
     TEMP_SCALE,
     ZENTRALY_ACCEPT_LANGUAGE,
@@ -288,6 +289,12 @@ class ZentralyAPI:
         if num_status in (1, 2):
             self.invalidate_token()
             raise ZentralyConnectionError(f"setConfig token rejected (numStatus={num_status}), will re-login next cycle")
+        if num_status == 6:
+            raise ZentralyDeviceOfflineError(
+                f"Device {device_id} is offline (numStatus=6), command not delivered"
+            )
+        if num_status != 0:
+            raise ZentralyConnectionError(f"setConfig failed: numStatus={num_status}")
         inner = result.get("ioData", "{}")
         if isinstance(inner, str):
             inner = json.loads(inner)
@@ -313,14 +320,19 @@ class ZentralyAPI:
         self._set_config(device_id, {"thermostatMode": mode})
 
     def set_power(self, device_id: str, on: bool, *, restore_target_temp: float | None = None) -> None:
-        """Turn the thermostat on or off like the Zentraly app.
+        """Turn the thermostat on or off.
 
-        Off: lower target below 5 °C, then thermostatMode 0 in one setConfig.
-        On: manual mode with target restored or 20 °C default.
+        Off (matches app cloud state): target 5 °C then thermostatMode 0. The device
+        rejects mode 0 until setpoint is below 5 °C, so we lower to 4 °C first if needed.
+        On: manual mode (4) with target restored or 20 °C default.
         """
         if on:
             target = restore_target_temp
-            if target is None or target < MIN_TARGET_TEMP or target > MAX_TARGET_TEMP:
+            if (
+                target is None
+                or target <= OFF_TARGET_TEMP
+                or target > MAX_TARGET_TEMP
+            ):
                 target = DEFAULT_ON_TARGET_TEMP
             centidegrees = round(target * TEMP_SCALE)
             _LOGGER.debug("set_power on %s → %d centidegrees, mode %d", device_id, centidegrees, HVAC_MODE_MANUAL)
@@ -334,7 +346,13 @@ class ZentralyAPI:
             return
 
         off_centidegrees = round(OFF_TARGET_TEMP * TEMP_SCALE)
-        _LOGGER.debug("set_power off %s → %d centidegrees, mode %d", device_id, off_centidegrees, HVAC_MODE_OFF)
+        pre_off_centidegrees = round(OFF_COMMAND_TEMP * TEMP_SCALE)
+        _LOGGER.debug(
+            "set_power off %s → target %d then mode %d",
+            device_id,
+            off_centidegrees,
+            HVAC_MODE_OFF,
+        )
         try:
             self._set_config(
                 device_id,
@@ -343,10 +361,36 @@ class ZentralyAPI:
                     {"thermostatMode": HVAC_MODE_OFF},
                 ],
             )
+            return
         except ZentralyConnectionError as exc:
             if "status=403" not in str(exc):
                 raise
+            _LOGGER.debug(
+                "set_power off %s: mode 0 rejected at 5 °C, lowering to %d first",
+                device_id,
+                pre_off_centidegrees,
+            )
+
+        self._set_config(device_id, {"targetTemp": pre_off_centidegrees})
+        try:
+            self._set_config(device_id, {"thermostatMode": HVAC_MODE_OFF})
+        except ZentralyConnectionError as exc:
+            if "status=403" not in str(exc):
+                raise
+            _LOGGER.warning(
+                "set_power off %s: thermostatMode 0 still rejected; setpoint is at %s °C",
+                device_id,
+                OFF_COMMAND_TEMP,
+            )
+            return
+
+        try:
             self._set_config(device_id, {"targetTemp": off_centidegrees})
+        except ZentralyConnectionError:
+            _LOGGER.debug(
+                "set_power off %s: could not restore 5 °C setpoint after mode off",
+                device_id,
+            )
 
     def reset_device(self, device_id: str) -> bool:
         """Send a reset command to the device.

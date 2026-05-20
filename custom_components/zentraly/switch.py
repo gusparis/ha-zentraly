@@ -7,7 +7,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import CONF_DEVICE_ID, CONF_DEVICE_NAME, DOMAIN, HVAC_MODE_OFF
+from .const import CONF_DEVICE_ID, CONF_DEVICE_NAME, DOMAIN, is_virtual_off
 
 
 async def async_setup_entry(
@@ -57,8 +57,11 @@ class ZentralyPowerSwitch(CoordinatorEntity, SwitchEntity):
 
     @property
     def is_on(self) -> bool:
-        mode = (self.coordinator.data or {}).get("thermostat_mode", HVAC_MODE_OFF)
-        return mode != HVAC_MODE_OFF
+        state = self.coordinator.data or {}
+        return not is_virtual_off(
+            state.get("target_temp"),
+            state.get("thermostat_mode"),
+        )
 
     async def async_turn_on(self, **kwargs) -> None:
         restore = (self.coordinator.data or {}).get("target_temp")
@@ -67,8 +70,10 @@ class ZentralyPowerSwitch(CoordinatorEntity, SwitchEntity):
             self._api.set_power(self._device_id, True, restore_target_temp=restore)
 
         await self.hass.async_add_executor_job(_turn_on)
+        await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self, **kwargs) -> None:
         await self.hass.async_add_executor_job(
             self._api.set_power, self._device_id, False
         )
+        await self.coordinator.async_request_refresh()

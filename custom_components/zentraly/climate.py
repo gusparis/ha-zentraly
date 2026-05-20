@@ -42,6 +42,8 @@ from .const import (
     HVAC_MODE_OFF,
     MAX_TARGET_TEMP,
     MIN_TARGET_TEMP,
+    OFF_TARGET_TEMP,
+    is_virtual_off,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -137,8 +139,13 @@ class ZentralyClimate(CoordinatorEntity, ClimateEntity):
 
     @property
     def hvac_mode(self) -> HVACMode:
-        mode_int = self._state.get("thermostat_mode", HVAC_MODE_OFF)
-        return _ZT_TO_HA.get(mode_int, HVACMode.OFF)
+        if is_virtual_off(
+            self._state.get("target_temp"),
+            self._state.get("thermostat_mode"),
+        ):
+            return HVACMode.OFF
+        mode_int = self._state.get("thermostat_mode", HVAC_MODE_MANUAL)
+        return _ZT_TO_HA.get(mode_int, HVACMode.HEAT)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -170,13 +177,21 @@ class ZentralyClimate(CoordinatorEntity, ClimateEntity):
         if temp is None:
             return
         temp = max(MIN_TARGET_TEMP, min(MAX_TARGET_TEMP, float(temp)))
-        await self.hass.async_add_executor_job(
-            self._api.set_temperature, self._device_id, temp
+        if temp <= OFF_TARGET_TEMP:
+            await self.async_turn_off()
+            return
+        was_off = is_virtual_off(
+            self._state.get("target_temp"),
+            self._state.get("thermostat_mode"),
         )
-        if self.hvac_mode == HVACMode.OFF:
-            await self.hass.async_add_executor_job(
-                self._api.set_hvac_mode, self._device_id, HVAC_MODE_MANUAL
-            )
+
+        def _apply() -> None:
+            self._api.set_temperature(self._device_id, temp)
+            if was_off:
+                self._api.set_hvac_mode(self._device_id, HVAC_MODE_MANUAL)
+
+        await self.hass.async_add_executor_job(_apply)
+        await self.coordinator.async_request_refresh()
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set HVAC mode."""
@@ -196,9 +211,11 @@ class ZentralyClimate(CoordinatorEntity, ClimateEntity):
             self._api.set_power(self._device_id, True, restore_target_temp=restore)
 
         await self.hass.async_add_executor_job(_turn_on)
+        await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self) -> None:
         """Turn off the thermostat."""
         await self.hass.async_add_executor_job(
             self._api.set_power, self._device_id, False
         )
+        await self.coordinator.async_request_refresh()

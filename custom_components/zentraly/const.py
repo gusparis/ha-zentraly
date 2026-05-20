@@ -39,8 +39,18 @@ HVAC_MODE_ECO = 5        # eco/away
 TEMP_SCALE = 100
 MIN_TARGET_TEMP = 5.0
 MAX_TARGET_TEMP = 30.0
-OFF_TARGET_TEMP = 4.0
+OFF_TARGET_TEMP = 5.0
+OFF_COMMAND_TEMP = 4.0
 DEFAULT_ON_TARGET_TEMP = 20.0
+
+
+def is_virtual_off(
+    target_temp: float | None,
+    thermostat_mode: int | None = None,
+) -> bool:
+    if thermostat_mode == HVAC_MODE_OFF:
+        return True
+    return target_temp is not None and target_temp <= OFF_TARGET_TEMP
 
 CONF_EMAIL = "email"
 CONF_PASSWORD = "password"
