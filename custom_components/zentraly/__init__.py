@@ -190,7 +190,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if _offline_since is None:
                 _offline_since = now
                 _LOGGER.warning(
-                    "Zentraly %s: device offline (not connected to Azure IoT Hub). "
+                    "Zentraly %s: device offline in cloud. "
                     "If this persists ~12 h, enable proactive reset in integration options "
                     "or use the restart button.",
                     device_id,

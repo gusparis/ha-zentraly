@@ -9,8 +9,3 @@ venv/
 dist/
 build/
 .pytest_cache/
-default/
-stress_fans.py
-docs/captures/*.flow
-docs/captures/*.pcap
-docs/captures/zentraly-traffic.log

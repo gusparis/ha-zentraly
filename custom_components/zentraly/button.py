@@ -32,12 +32,7 @@ async def async_setup_entry(
 
 
 class ZentralyResetButton(ButtonEntity):
-    """Button that sends a reset command to the thermostat.
-
-    Causes the ESP32 to reboot (~30 s offline) and reconnect to Azure IoT Hub
-    with a fresh SAS token. Use this to manually recover a disconnected device
-    or to pre-empt the 12-hour token expiry.
-    """
+    """Restart the thermostat via the Zentraly cloud."""
 
     _attr_has_entity_name = True
     _attr_name = "Reiniciar termostato"

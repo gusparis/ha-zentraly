@@ -40,7 +40,7 @@
     "step": {
       "init": {
         "title": "Zentraly options",
-        "description": "Lower polling reduces WiFi load on the thermostat. Proactive reset reboots the device every 11 hours to avoid a known Azure IoT token bug — only enable if devices go offline after ~12 hours.",
+        "description": "Lower polling reduces WiFi load on the thermostat. Proactive reset reboots the device every 11 hours — only enable if devices go offline after many hours.",
         "data": {
           "scan_interval": "Poll interval (seconds)",
           "proactive_reset": "Proactive device reset (advanced)"

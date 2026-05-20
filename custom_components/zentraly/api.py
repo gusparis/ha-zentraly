@@ -1,19 +1,4 @@
-"""Zentraly API client.
-
-Protocolo documentado via MITM (mitmproxy) del tráfico de la app iOS (7.1.3).
-
-Auth flow:
-  GET /Login
-    Authorization: ztv2Auth{email}:{password}
-    firebase: <base64 JSON con metadata del dispositivo>
-  → devuelve JWT token + lista de ubicaciones/dispositivos
-
-Comandos (todos POST /IOTCommand/Run):
-  getConfig  → lee estado actual del termostato
-  setConfig  → escribe targetTemp o thermostatMode
-
-Temperatura: API usa centigrados × 100 (ej: 21.5°C = 2150)
-"""
+"""Zentraly cloud API client."""
 
 from __future__ import annotations
 
@@ -91,7 +76,7 @@ class ZentralyConnectionError(Exception):
 
 
 class ZentralyDeviceOfflineError(ZentralyConnectionError):
-    """Device is not connected to Azure IoT Hub (numStatus=6).
+    """Device is offline in the cloud (numStatus=6).
 
     Distinct from generic connection errors so the coordinator can apply
     specific watchdog logic (auto-reset) without reacting the same way to
@@ -297,7 +282,7 @@ class ZentralyAPI:
         )
         num_status = result.get("numStatus")
         if num_status == 6:
-            # Device offline: not connected to Azure IoT Hub.
+            # Device offline in cloud.
             # Raised as a specific subclass so the coordinator can apply watchdog logic.
             raise ZentralyDeviceOfflineError(f"Device {device_id} is offline (numStatus=6)")
         if num_status != 0:
@@ -445,16 +430,7 @@ class ZentralyAPI:
     def reset_device(self, device_id: str) -> bool:
         """Send a reset command to the device.
 
-        The reset command causes the ESP32 to reboot, which forces it to
-        generate a fresh Azure IoT Hub SAS token and reconnect.  This is
-        the software equivalent of a power cycle.
-
-        The command is accepted even when the device appears offline because
-        Zentraly's backend queues it as a Cloud-to-Device message; the
-        device receives it as soon as it briefly re-establishes the MQTT
-        connection (or on the next boot attempt).
-
-        Returns True if the backend confirmed the command was accepted.
+        Returns True if the cloud accepted the command.
         """
         try:
             result = self._iot_run(

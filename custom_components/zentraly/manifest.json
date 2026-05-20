@@ -4,9 +4,9 @@
   "codeowners": [],
   "config_flow": true,
   "dependencies": [],
-  "documentation": "https://github.com/rgg-spagano/ha-zentraly",
+  "documentation": "https://github.com/gusparis/ha-zentraly",
   "iot_class": "cloud_polling",
-  "issue_tracker": "https://github.com/rgg-spagano/ha-zentraly/issues",
+  "issue_tracker": "https://github.com/gusparis/ha-zentraly/issues",
   "requirements": [],
-  "version": "1.0.21"
+  "version": "1.0.22"
 }

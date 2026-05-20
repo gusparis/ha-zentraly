@@ -27,15 +27,13 @@ PROACTIVE_RESET_INTERVAL_HOURS = 11
 OFFLINE_RESET_THRESHOLD_MINUTES = 30
 MIN_RESET_INTERVAL_HOURS = 4
 
-# thermostatMode values observed via MITM
 HVAC_MODE_OFF = 0
-HVAC_MODE_HEAT = 1       # calefacción
-HVAC_MODE_COOL = 2       # refrigeración
-HVAC_MODE_AUTO = 3       # auto / programación
-HVAC_MODE_MANUAL = 4     # manual (confirmed via MITM: "Modo manual")
-HVAC_MODE_ECO = 5        # eco/away
+HVAC_MODE_HEAT = 1
+HVAC_MODE_COOL = 2
+HVAC_MODE_AUTO = 3
+HVAC_MODE_MANUAL = 4
+HVAC_MODE_ECO = 5
 
-# Temperature encoding: API uses centidegrees (16.0°C → 1600)
 TEMP_SCALE = 100
 MIN_TARGET_TEMP = 5.0
 MAX_TARGET_TEMP = 30.0

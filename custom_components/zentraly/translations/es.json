@@ -40,7 +40,7 @@
     "step": {
       "init": {
         "title": "Opciones de Zentraly",
-        "description": "Un polling más bajo reduce la carga WiFi del termostato. El reset proactivo reinicia el equipo cada 11 horas para evitar un bug conocido del token Azure IoT — activalo solo si el termostato se desconecta a las ~12 horas.",
+        "description": "Un polling más bajo reduce la carga WiFi del termostato. El reset proactivo reinicia el equipo cada 11 horas — activalo solo si el termostato se desconecta tras muchas horas.",
         "data": {
           "scan_interval": "Intervalo de consulta (segundos)",
           "proactive_reset": "Reset proactivo del termostato (avanzado)"

@@ -1,17 +1,4 @@
-"""Zentraly climate entity.
-
-Modos confirmados via MITM:
-  thermostatMode 0 → off
-  thermostatMode 4 → manual/heat  ("Modo manual" en la app)
-
-Valores adicionales (deducidos por la app, a confirmar):
-  thermostatMode 1 → heat automático / schedule
-  thermostatMode 2 → cool
-  thermostatMode 3 → auto
-  thermostatMode 5 → eco/away
-
-Temperatura: API usa centidegrees (21.5°C → 2150).
-"""
+"""Zentraly climate entity."""
 from __future__ import annotations
 
 import logging
