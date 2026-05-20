@@ -1,6 +1,6 @@
 """Zentraly API client.
 
-Protocolo documentado via MITM (mitmproxy) del tráfico de la app Android.
+Protocolo documentado via MITM (mitmproxy) del tráfico de la app iOS (7.1.3).
 
 Auth flow:
   GET /Login
@@ -22,6 +22,7 @@ import json
 import logging
 import urllib.error
 import urllib.request
+import uuid
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -37,32 +38,32 @@ from .const import (
     MIN_TARGET_TEMP,
     OFF_TARGET_TEMP,
     TEMP_SCALE,
+    ZENTRALY_ACCEPT_LANGUAGE,
+    ZENTRALY_APP_VERSION,
+    ZENTRALY_FB_TOKEN_PLACEHOLDER,
+    ZENTRALY_MOBILE_OS,
+    ZENTRALY_USER_AGENT,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
-_FIREBASE_HEADER_TEMPLATE = {
-    "ivstrUserFBToken": "ha_token",
-    "ivstrUserGuid": "ha_token",
-    "ivstrUserZtVersion": "6.3.0",
-    "ivnroUserMobileOS": 1,          # 1 = iOS, 2 = Android
-    "ivstrUserMobileTrade": "apple",
-    "ivstrUserMobileModel": "iPhone14,3",  # iPhone 13 Pro Max
-    "ivstrUserMobileOSVersion": 17,
-    "ivstrUserLanguage": "es",
-}
 
-# iOS app uses CFNetwork / NSURLSession, not okhttp
-_IOS_USER_AGENT = (
-    "Zentraly/6.3.0 (com.kotlin.zentraly; build:1; iOS 17.4.1)"
-    " CFNetwork/1494.0.7 Darwin/23.4.0"
-)
+def _device_guid(email: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_DNS, f"zentraly-home-assistant:{email}"))
 
 
-def _make_firebase_header() -> str:
-    return base64.b64encode(
-        json.dumps(_FIREBASE_HEADER_TEMPLATE).encode()
-    ).decode()
+def _make_firebase_header(email: str) -> str:
+    payload = {
+        "ivstrUserFBToken": ZENTRALY_FB_TOKEN_PLACEHOLDER,
+        "ivstrUserGuid": _device_guid(email),
+        "ivstrUserZtVersion": ZENTRALY_APP_VERSION,
+        "ivnroUserMobileOS": ZENTRALY_MOBILE_OS,
+        "ivstrUserMobileTrade": "Apple",
+        "ivstrUserMobileModel": "iOS",
+        "ivstrUserMobileOSVersion": "26.3.1",
+        "ivstrUserLanguage": "en",
+    }
+    return base64.b64encode(json.dumps(payload).encode()).decode()
 
 
 def _request(url: str, *, method: str = "GET", headers: dict, body: Optional[dict] = None) -> dict:
@@ -105,7 +106,7 @@ class ZentralyAPI:
         self._password = password
         self._token: Optional[str] = None
         self._token_expires: datetime = datetime.min
-        self._firebase_header = _make_firebase_header()
+        self._firebase_header = _make_firebase_header(email)
         self._login_data: dict = {}  # full login response, parsed once
 
     # ------------------------------------------------------------------
@@ -116,10 +117,11 @@ class ZentralyAPI:
         return {
             "Accept": "application/json",
             "Content-Type": "application/json",
-            "Accept-Language": "es-AR;q=1.0, en-AR;q=0.9",
+            "Accept-Language": ZENTRALY_ACCEPT_LANGUAGE,
+            "Connection": "keep-alive",
             "firebase": self._firebase_header,
-            "authorization": auth_token or f"ztv2Auth{self._email}:{self._password}",
-            "User-Agent": _IOS_USER_AGENT,
+            "Authorization": auth_token or f"ztv2Auth{self._email}:{self._password}",
+            "User-Agent": ZENTRALY_USER_AGENT,
         }
 
     def login(self) -> dict:

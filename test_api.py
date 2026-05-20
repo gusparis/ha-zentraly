@@ -3,10 +3,11 @@
 Prueba del cliente API de Zentraly sin Home Assistant.
 Corre desde la raíz del proyecto:
     python3 test_api.py
+    python3 test_api.py --inspect-login
 """
+import argparse
 import getpass
 import importlib.util
-import json
 import os
 import sys
 
@@ -24,11 +25,19 @@ _const_spec.loader.exec_module(_const_mod)
 _api_spec = importlib.util.spec_from_file_location("custom_components.zentraly.api", _api_path)
 _api_mod = importlib.util.module_from_spec(_api_spec)
 sys.modules["custom_components.zentraly.api"] = _api_mod
+_inspect_spec = importlib.util.spec_from_file_location(
+    "custom_components.zentraly.auth_inspect",
+    os.path.join(os.path.dirname(__file__), "custom_components", "zentraly", "auth_inspect.py"),
+)
+_inspect_mod = importlib.util.module_from_spec(_inspect_spec)
+_inspect_spec.loader.exec_module(_inspect_mod)
+
 _api_spec.loader.exec_module(_api_mod)
 
 ZentralyAPI = _api_mod.ZentralyAPI
 ZentralyAuthError = _api_mod.ZentralyAuthError
 ZentralyConnectionError = _api_mod.ZentralyConnectionError
+format_login_inspection = _inspect_mod.format_login_inspection
 
 GREEN  = "\033[92m"
 RED    = "\033[91m"
@@ -40,23 +49,33 @@ def fail(msg): print(f"  {RED}✗{RESET} {msg}")
 def info(msg): print(f"  {YELLOW}→{RESET} {msg}")
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Zentraly API test")
+    parser.add_argument(
+        "--inspect-login",
+        action="store_true",
+        help="Dump login/ioUser key paths (redacted) and exit",
+    )
+    return parser.parse_args()
+
+
 def main():
+    args = parse_args()
     print("=" * 55)
     print("  Zentraly – Test del cliente API")
     print("=" * 55)
     print()
 
-    email    = input("Email de tu cuenta Zentraly: ").strip()
+    email = input("Email de tu cuenta Zentraly: ").strip()
     password = getpass.getpass("Contraseña (no se muestra): ")
     print()
 
     api = ZentralyAPI(email, password)
 
-    # ── 1. Login ──────────────────────────────────────────────
     print("[ 1 ] Login")
     try:
         result = api.login()
-        ok(f"Login exitoso")
+        ok("Login exitoso")
         info(f"Token (primeros 40 chars): {api._token[:40]}...")
     except ZentralyAuthError as e:
         fail(f"Auth error: {e}")
@@ -65,6 +84,14 @@ def main():
         fail(f"Conexión: {e}")
         sys.exit(1)
     print()
+
+    if args.inspect_login:
+        print(format_login_inspection(result, api._firebase_header))
+        print()
+        print("Guardá esta salida y comparala con una captura MITM de la app.")
+        print("Ver docs/zentraly-api-research.md")
+        return
+
 
     # ── 2. Dispositivos ───────────────────────────────────────
     print("[ 2 ] Dispositivos")

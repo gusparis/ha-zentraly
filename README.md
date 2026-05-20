@@ -62,6 +62,16 @@ Avoid running the official Zentraly app on the same account at the same time as 
 
 ---
 
+## API research
+
+See [docs/zentraly-api-research.md](docs/zentraly-api-research.md) for auth fields (email, password, user number, security code) and how to capture app traffic with mitmproxy.
+
+Inspect your account login structure (redacted):
+
+```bash
+python3 test_api.py --inspect-login
+```
+
 ## API (reverse-engineered via MITM)
 
 | Endpoint | Method | Description |
