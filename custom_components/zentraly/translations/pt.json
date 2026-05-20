@@ -10,17 +10,18 @@
         }
       },
       "device": {
-        "title": "Selecionar termostato",
-        "description": "Escolha o termostato que deseja integrar.",
+        "title": "Selecionar termostatos",
+        "description": "Escolha um ou mais termostatos. Os já configurados não aparecem.",
         "data": {
-          "device_id": "Dispositivo"
+          "device_ids": "Termostatos"
         }
       }
     },
     "error": {
       "cannot_connect": "Não foi possível conectar à API Zentraly. Verifique sua rede.",
       "invalid_auth": "Email ou senha incorretos.",
-      "unknown": "Erro inesperado. Verifique os registros para mais detalhes."
+      "unknown": "Erro inesperado. Verifique os registros para mais detalhes.",
+      "no_devices_selected": "Selecione pelo menos um termostato."
     },
     "abort": {
       "already_configured": "Este dispositivo já está configurado.",

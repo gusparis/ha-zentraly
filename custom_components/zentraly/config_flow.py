@@ -9,10 +9,12 @@ from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import selector
 
 from .api import ZentralyAPI, ZentralyAuthError, ZentralyConnectionError
 from .const import (
     CONF_DEVICE_ID,
+    CONF_DEVICE_IDS,
     CONF_DEVICE_NAME,
     CONF_EMAIL,
     CONF_PASSWORD,
@@ -93,6 +95,47 @@ class ZentralyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._devices: list[dict] = []
         self._credentials: dict = {}
 
+    def _configured_device_ids(self) -> set[str]:
+        return {
+            entry.data[CONF_DEVICE_ID]
+            for entry in self.hass.config_entries.async_entries(DOMAIN)
+            if CONF_DEVICE_ID in entry.data
+        }
+
+    def _available_devices(self) -> list[dict]:
+        configured = self._configured_device_ids()
+        return [d for d in self._devices if d["device_id"] not in configured]
+
+    def _entry_data(self, device: dict) -> dict[str, Any]:
+        return {
+            **self._credentials,
+            CONF_DEVICE_ID: device["device_id"],
+            CONF_DEVICE_NAME: device["name"],
+        }
+
+    def _device_selector_schema(self, devices: list[dict]) -> vol.Schema:
+        device_ids = [d["device_id"] for d in devices]
+        return vol.Schema(
+            {
+                vol.Required(
+                    CONF_DEVICE_IDS,
+                    default=device_ids,
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=[
+                            selector.SelectOptionDict(
+                                value=d["device_id"],
+                                label=d["name"],
+                            )
+                            for d in devices
+                        ],
+                        multiple=True,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    ),
+                ),
+            }
+        )
+
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
@@ -111,18 +154,17 @@ class ZentralyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 _LOGGER.exception("Unexpected exception during Zentraly config flow")
                 errors["base"] = "unknown"
             else:
-                if len(self._devices) == 1:
-                    # Only one device → create entry directly
-                    device = self._devices[0]
+                available = self._available_devices()
+                if not available:
+                    return self.async_abort(reason="already_configured")
+                if len(available) == 1:
+                    device = available[0]
+                    await self.async_set_unique_id(device["device_id"])
+                    self._abort_if_unique_id_configured()
                     return self.async_create_entry(
                         title=device["name"],
-                        data={
-                            **self._credentials,
-                            CONF_DEVICE_ID: device["device_id"],
-                            CONF_DEVICE_NAME: device["name"],
-                        },
+                        data=self._entry_data(device),
                     )
-                # Multiple devices → let user pick
                 return await self.async_step_device()
 
         return self.async_show_form(
@@ -134,27 +176,57 @@ class ZentralyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_device(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Let the user select which thermostat to add."""
+        """Let the user select one or more thermostats to add."""
+        available = self._available_devices()
+        if not available:
+            return self.async_abort(reason="already_configured")
+
         if user_input is not None:
-            device_id = user_input[CONF_DEVICE_ID]
-            device = next(d for d in self._devices if d["device_id"] == device_id)
+            selected_ids = user_input.get(CONF_DEVICE_IDS) or []
+            if isinstance(selected_ids, str):
+                selected_ids = [selected_ids]
+
+            if not selected_ids:
+                return self.async_show_form(
+                    step_id="device",
+                    data_schema=self._device_selector_schema(available),
+                    errors={"base": "no_devices_selected"},
+                )
+
+            devices_by_id = {d["device_id"]: d for d in available}
+            to_add = [devices_by_id[device_id] for device_id in selected_ids if device_id in devices_by_id]
+
+            if not to_add:
+                return self.async_show_form(
+                    step_id="device",
+                    data_schema=self._device_selector_schema(available),
+                    errors={"base": "no_devices_selected"},
+                )
+
+            for device in to_add[:-1]:
+                entry = config_entries.ConfigEntry(
+                    version=self.VERSION,
+                    domain=DOMAIN,
+                    title=device["name"],
+                    data=self._entry_data(device),
+                    source=config_entries.SOURCE_USER,
+                    unique_id=device["device_id"],
+                    options={},
+                )
+                self.hass.config_entries.async_add(entry)
+
+            last_device = to_add[-1]
+            await self.async_set_unique_id(last_device["device_id"])
+            self._abort_if_unique_id_configured()
             return self.async_create_entry(
-                title=device["name"],
-                data={
-                    **self._credentials,
-                    CONF_DEVICE_ID: device["device_id"],
-                    CONF_DEVICE_NAME: device["name"],
-                },
+                title=last_device["name"],
+                data=self._entry_data(last_device),
             )
 
-        device_options = {d["device_id"]: d["name"] for d in self._devices}
         return self.async_show_form(
             step_id="device",
-            data_schema=vol.Schema(
-                {vol.Required(CONF_DEVICE_ID): vol.In(device_options)}
-            ),
+            data_schema=self._device_selector_schema(available),
         )
-
 
     async def async_step_reauth(self, entry_data: dict) -> FlowResult:
         """Handle re-authentication when credentials are invalid."""

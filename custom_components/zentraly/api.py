@@ -265,8 +265,9 @@ class ZentralyAPI:
     # Control
     # ------------------------------------------------------------------
 
-    def _set_config(self, device_id: str, payload: dict) -> None:
-        """Send a setConfig command."""
+    def _set_config(self, device_id: str, fields: dict | list[dict]) -> None:
+        """Send a setConfig command with one or more id fields."""
+        config_ids = fields if isinstance(fields, list) else [fields]
         self.ensure_authenticated()
         body = {
             "deviceId": device_id,
@@ -274,7 +275,7 @@ class ZentralyAPI:
             "data": {
                 "cmd": "setConfig",
                 "rid": 0,
-                "ids": [payload],
+                "ids": config_ids,
             },
         }
         result = _request(
@@ -290,8 +291,12 @@ class ZentralyAPI:
         inner = result.get("ioData", "{}")
         if isinstance(inner, str):
             inner = json.loads(inner)
-        if inner.get("status") != 200:
-            raise ZentralyConnectionError(f"setConfig failed: {result}")
+        device_status = inner.get("status")
+        if device_status != 200:
+            message = f"setConfig failed: device status={device_status}"
+            if device_status == 403:
+                message += " (setpoint must be below 5 °C before off, or device is locked)"
+            raise ZentralyConnectionError(message)
 
     def set_temperature(self, device_id: str, temperature: float) -> None:
         """Set target temperature (in °C)."""
@@ -301,25 +306,47 @@ class ZentralyAPI:
 
     def set_hvac_mode(self, device_id: str, mode: int) -> None:
         """Set thermostatMode (0=off, 4=manual/heat, etc.)."""
+        if mode == HVAC_MODE_OFF:
+            self.set_power(device_id, False)
+            return
         _LOGGER.debug("set_hvac_mode %s → mode %d", device_id, mode)
         self._set_config(device_id, {"thermostatMode": mode})
 
     def set_power(self, device_id: str, on: bool, *, restore_target_temp: float | None = None) -> None:
         """Turn the thermostat on or off like the Zentraly app.
 
-        Off: thermostatMode 0 and target below 5 °C (manual spec).
+        Off: lower target below 5 °C, then thermostatMode 0 in one setConfig.
         On: manual mode with target restored or 20 °C default.
         """
         if on:
             target = restore_target_temp
             if target is None or target < MIN_TARGET_TEMP or target > MAX_TARGET_TEMP:
                 target = DEFAULT_ON_TARGET_TEMP
-            self.set_temperature(device_id, target)
-            self.set_hvac_mode(device_id, HVAC_MODE_MANUAL)
+            centidegrees = round(target * TEMP_SCALE)
+            _LOGGER.debug("set_power on %s → %d centidegrees, mode %d", device_id, centidegrees, HVAC_MODE_MANUAL)
+            self._set_config(
+                device_id,
+                [
+                    {"targetTemp": centidegrees},
+                    {"thermostatMode": HVAC_MODE_MANUAL},
+                ],
+            )
             return
 
-        self.set_hvac_mode(device_id, HVAC_MODE_OFF)
-        self.set_temperature(device_id, OFF_TARGET_TEMP)
+        off_centidegrees = round(OFF_TARGET_TEMP * TEMP_SCALE)
+        _LOGGER.debug("set_power off %s → %d centidegrees, mode %d", device_id, off_centidegrees, HVAC_MODE_OFF)
+        try:
+            self._set_config(
+                device_id,
+                [
+                    {"targetTemp": off_centidegrees},
+                    {"thermostatMode": HVAC_MODE_OFF},
+                ],
+            )
+        except ZentralyConnectionError as exc:
+            if "status=403" not in str(exc):
+                raise
+            self._set_config(device_id, {"targetTemp": off_centidegrees})
 
     def reset_device(self, device_id: str) -> bool:
         """Send a reset command to the device.

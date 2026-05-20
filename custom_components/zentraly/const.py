@@ -45,6 +45,7 @@ DEFAULT_ON_TARGET_TEMP = 20.0
 CONF_EMAIL = "email"
 CONF_PASSWORD = "password"
 CONF_DEVICE_ID = "device_id"
+CONF_DEVICE_IDS = "device_ids"
 CONF_DEVICE_NAME = "device_name"
 
 ATTR_HUMIDITY = "humidity"
