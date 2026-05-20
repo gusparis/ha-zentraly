@@ -75,7 +75,7 @@ def _request(url: str, *, method: str = "GET", headers: dict, body: Optional[dic
             return json.loads(resp.read())
     except urllib.error.HTTPError as exc:
         body_text = exc.read().decode(errors="ignore")[:200]
-        if exc.code in (401, 403):
+        if exc.code == 401:
             raise ZentralyAuthError(f"HTTP {exc.code}: {body_text}") from exc
         raise ZentralyConnectionError(f"HTTP {exc.code}: {body_text}") from exc
     except Exception as exc:
@@ -108,7 +108,15 @@ class ZentralyAPI:
         self._token: Optional[str] = None
         self._token_expires: datetime = datetime.min
         self._firebase_header = _make_firebase_header(email)
-        self._login_data: dict = {}  # full login response, parsed once
+        self._login_data: dict = {}
+
+    def update_credentials(self, email: str, password: str) -> None:
+        if self._email == email and self._password == password:
+            return
+        self._email = email
+        self._password = password
+        self._firebase_header = _make_firebase_header(email)
+        self.invalidate_token()
 
     # ------------------------------------------------------------------
     # Auth
@@ -126,13 +134,18 @@ class ZentralyAPI:
         }
 
     def login(self) -> dict:
-        """Authenticate and return the full login payload."""
+        """Authenticate with stored email/password and cache JWT."""
         _LOGGER.debug("Logging in to Zentraly as %s", self._email)
-        result = _request(LOGIN_URL, headers=self._common_headers())
+        self._token = None
+        result = self._request_with_relogin(
+            LOGIN_URL,
+            method="GET",
+            body=None,
+            use_password_auth=True,
+        )
         if result.get("numStatus") != 0:
             raise ZentralyAuthError(f"Login failed: numStatus={result.get('numStatus')}")
 
-        # Token is at ioData.ivstrToken (confirmed via MITM capture)
         io_data = result.get("ioData", {})
         token_raw = io_data.get("ivstrToken")
         if not token_raw:
@@ -140,9 +153,70 @@ class ZentralyAPI:
             raise ZentralyAuthError("Login succeeded but token not found in response")
 
         self._token = token_raw
-        self._login_data = io_data  # cache for device discovery
-        # JWT expires in ~100 years based on captured token (exp: 2121297637)
+        self._login_data = io_data
         self._token_expires = datetime.now() + timedelta(minutes=JWT_REFRESH_MINUTES)
+        return result
+
+    def _request_with_relogin(
+        self,
+        url: str,
+        *,
+        method: str = "GET",
+        body: Optional[dict] = None,
+        use_password_auth: bool = False,
+    ) -> dict:
+        try:
+            return _request(
+                url,
+                method=method,
+                headers=self._common_headers(
+                    auth_token=None if use_password_auth else self._auth_token_header()
+                ),
+                body=body,
+            )
+        except ZentralyAuthError:
+            if use_password_auth:
+                raise
+            _LOGGER.debug("Zentraly token rejected for %s, re-logging in", self._email)
+            self.login()
+            return _request(
+                url,
+                method=method,
+                headers=self._common_headers(auth_token=self._auth_token_header()),
+                body=body,
+            )
+
+    def _iot_run(self, device_id: str, data_cmd: dict) -> dict:
+        self.ensure_authenticated()
+        body = {
+            "deviceId": device_id,
+            "timeOut": COMMAND_TIMEOUT,
+            "data": data_cmd,
+        }
+        result = self._request_with_relogin(
+            IOT_COMMAND_URL,
+            method="POST",
+            body=body,
+        )
+        num_status = result.get("numStatus")
+        if num_status in (1, 2):
+            _LOGGER.debug(
+                "Zentraly token numStatus=%s for %s, re-logging in and retrying",
+                num_status,
+                device_id,
+            )
+            self.login()
+            result = _request(
+                IOT_COMMAND_URL,
+                method="POST",
+                headers=self._common_headers(auth_token=self._auth_token_header()),
+                body=body,
+            )
+            num_status = result.get("numStatus")
+            if num_status in (1, 2):
+                raise ZentralyConnectionError(
+                    f"IOT command token rejected after re-login (numStatus={num_status})"
+                )
         return result
 
     def _auth_token_header(self) -> str:
@@ -202,11 +276,9 @@ class ZentralyAPI:
 
     def get_state(self, device_id: str) -> dict:
         """Read current thermostat state. Returns parsed values."""
-        self.ensure_authenticated()
-        body = {
-            "deviceId": device_id,
-            "timeOut": COMMAND_TIMEOUT,
-            "data": {
+        result = self._iot_run(
+            device_id,
+            {
                 "cmd": "getConfig",
                 "rid": 1,
                 "ids": [
@@ -222,19 +294,8 @@ class ZentralyAPI:
                     "service",
                 ],
             },
-        }
-        result = _request(
-            IOT_COMMAND_URL,
-            method="POST",
-            headers=self._common_headers(auth_token=self._auth_token_header()),
-            body=body,
         )
         num_status = result.get("numStatus")
-        if num_status in (1, 2):
-            # Token rejected server-side: invalidate so next cycle re-logins automatically.
-            # Raise ConnectionError (not AuthError) to avoid triggering the HA re-auth UI.
-            self.invalidate_token()
-            raise ZentralyConnectionError(f"getConfig token rejected (numStatus={num_status}), will re-login next cycle")
         if num_status == 6:
             # Device offline: not connected to Azure IoT Hub.
             # Raised as a specific subclass so the coordinator can apply watchdog logic.
@@ -269,26 +330,15 @@ class ZentralyAPI:
     def _set_config(self, device_id: str, fields: dict | list[dict]) -> None:
         """Send a setConfig command with one or more id fields."""
         config_ids = fields if isinstance(fields, list) else [fields]
-        self.ensure_authenticated()
-        body = {
-            "deviceId": device_id,
-            "timeOut": COMMAND_TIMEOUT,
-            "data": {
+        result = self._iot_run(
+            device_id,
+            {
                 "cmd": "setConfig",
                 "rid": 0,
                 "ids": config_ids,
             },
-        }
-        result = _request(
-            IOT_COMMAND_URL,
-            method="POST",
-            headers=self._common_headers(auth_token=self._auth_token_header()),
-            body=body,
         )
         num_status = result.get("numStatus")
-        if num_status in (1, 2):
-            self.invalidate_token()
-            raise ZentralyConnectionError(f"setConfig token rejected (numStatus={num_status}), will re-login next cycle")
         if num_status == 6:
             raise ZentralyDeviceOfflineError(
                 f"Device {device_id} is offline (numStatus=6), command not delivered"
@@ -406,30 +456,19 @@ class ZentralyAPI:
 
         Returns True if the backend confirmed the command was accepted.
         """
-        self.ensure_authenticated()
-        body = {
-            "deviceId": device_id,
-            "timeOut": COMMAND_TIMEOUT,
-            "data": {
-                "cmd": "reset",
-                "rid": 0,
-                "ids": [{}],
-            },
-        }
         try:
-            result = _request(
-                IOT_COMMAND_URL,
-                method="POST",
-                headers=self._common_headers(auth_token=self._auth_token_header()),
-                body=body,
+            result = self._iot_run(
+                device_id,
+                {
+                    "cmd": "reset",
+                    "rid": 0,
+                    "ids": [{}],
+                },
             )
         except ZentralyConnectionError:
             return False
 
         num_status = result.get("numStatus")
-        if num_status in (1, 2):
-            self.invalidate_token()
-            return False
         inner = result.get("ioData", "{}")
         if isinstance(inner, str):
             try:

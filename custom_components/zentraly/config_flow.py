@@ -11,6 +11,7 @@ from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import selector
 
+from .account import update_stored_credentials_for_account
 from .api import ZentralyAPI, ZentralyAuthError, ZentralyConnectionError
 from .const import (
     CONF_DEVICE_ID,
@@ -34,6 +35,15 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
         vol.Required(CONF_PASSWORD): str,
     }
 )
+
+
+def _reauth_schema(email: str) -> vol.Schema:
+    return vol.Schema(
+        {
+            vol.Required(CONF_EMAIL, default=email): str,
+            vol.Required(CONF_PASSWORD): str,
+        }
+    )
 
 
 async def validate_and_get_devices(hass: HomeAssistant, data: dict) -> list[dict]:
@@ -228,16 +238,15 @@ class ZentralyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=self._device_selector_schema(available),
         )
 
-    async def async_step_reauth(self, entry_data: dict) -> FlowResult:
-        """Handle re-authentication when credentials are invalid."""
-        return await self.async_step_reauth_confirm()
-
-    async def async_step_reauth_confirm(
+    async def async_step_reauth(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Confirm re-authentication with new credentials."""
-        errors: dict[str, str] = {}
+        """Re-authenticate using credentials stored in the config entry."""
+        reauth_entry = self._get_reauth_entry()
+        email = reauth_entry.data[CONF_EMAIL]
+
         if user_input is not None:
+            errors: dict[str, str] = {}
             try:
                 await validate_and_get_devices(self.hass, user_input)
             except CannotConnect:
@@ -247,18 +256,29 @@ class ZentralyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             except Exception:
                 errors["base"] = "unknown"
             else:
-                entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
-                self.hass.config_entries.async_update_entry(
-                    entry,
-                    data={**entry.data, **user_input},
+                new_email = user_input[CONF_EMAIL]
+                new_password = user_input[CONF_PASSWORD]
+                update_stored_credentials_for_account(
+                    self.hass,
+                    email,
+                    new_email=new_email,
+                    new_password=new_password,
                 )
-                await self.hass.config_entries.async_reload(entry.entry_id)
+                for entry in self.hass.config_entries.async_entries(DOMAIN):
+                    if entry.data.get(CONF_EMAIL) != new_email:
+                        continue
+                    await self.hass.config_entries.async_reload(entry.entry_id)
                 return self.async_abort(reason="reauth_successful")
 
+            return self.async_show_form(
+                step_id="reauth",
+                data_schema=_reauth_schema(email),
+                errors=errors,
+            )
+
         return self.async_show_form(
-            step_id="reauth_confirm",
-            data_schema=STEP_USER_DATA_SCHEMA,
-            errors=errors,
+            step_id="reauth",
+            data_schema=_reauth_schema(email),
         )
 
 

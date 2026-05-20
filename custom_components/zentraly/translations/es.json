@@ -15,6 +15,14 @@
         "data": {
           "device_ids": "Termostatos"
         }
+      },
+      "reauth": {
+        "title": "Volver a autenticar Zentraly",
+        "description": "Las credenciales se guardan cifradas en Home Assistant. Volvé a ingresar la contraseña solo si la cambiaste.",
+        "data": {
+          "email": "Email",
+          "password": "Contraseña"
+        }
       }
     },
     "error": {

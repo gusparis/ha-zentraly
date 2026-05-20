@@ -15,6 +15,14 @@
         "data": {
           "device_ids": "Thermostats"
         }
+      },
+      "reauth": {
+        "title": "Re-authenticate Zentraly",
+        "description": "Credentials are stored encrypted in Home Assistant. Enter your Zentraly password again only if it changed.",
+        "data": {
+          "email": "Email",
+          "password": "Password"
+        }
       }
     },
     "error": {

@@ -13,6 +13,7 @@ from homeassistant.helpers.restore_state import RestoreEntity  # noqa: F401 – 
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
+from .account import get_or_create_api
 from .api import ZentralyAPI, ZentralyAuthError, ZentralyConnectionError, ZentralyDeviceOfflineError
 from .const import (
     CONF_DEVICE_ID,
@@ -60,8 +61,14 @@ def _start_account_session(hass: HomeAssistant, email: str, api: ZentralyAPI) ->
         try:
             await hass.async_add_executor_job(api.login)
             _LOGGER.debug("Zentraly session keepalive OK for %s", email)
+        except ZentralyAuthError as exc:
+            _LOGGER.error(
+                "Zentraly session keepalive auth failed for %s: %s",
+                email,
+                exc,
+            )
         except Exception as exc:  # noqa: BLE001
-            _LOGGER.debug("Zentraly session keepalive failed for %s: %s", email, exc)
+            _LOGGER.warning("Zentraly session keepalive failed for %s: %s", email, exc)
 
     keepalive_unsubs[email] = async_track_time_interval(
         hass,
@@ -95,19 +102,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     device_id = entry.data[CONF_DEVICE_ID]
 
     domain_data = hass.data.setdefault(DOMAIN, {})
-    shared_apis = domain_data.setdefault("_shared_apis", {})
     refcounts = domain_data.setdefault("_account_refcounts", {})
 
-    if email not in shared_apis:
-        shared_apis[email] = ZentralyAPI(
-            email=email,
-            password=entry.data[CONF_PASSWORD],
-        )
-        refcounts[email] = 0
-        _start_account_session(hass, email, shared_apis[email])
+    api = get_or_create_api(hass, entry)
+    if refcounts.get(email, 0) == 0:
+        _start_account_session(hass, email, api)
 
     refcounts[email] = refcounts.get(email, 0) + 1
-    api = shared_apis[email]
 
     store = Store(hass, _STORAGE_VERSION, f"{DOMAIN}_{device_id}_state")
     stored = await store.async_load() or {}
@@ -163,11 +164,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         except ZentralyAuthError as exc:
             _LOGGER.warning(
-                "Zentraly %s: auth error (%s) — will re-login next cycle",
+                "Zentraly %s: auth error (%s), retrying login with stored credentials",
                 device_id,
                 exc,
             )
-            api.invalidate_token()
+            try:
+                await hass.async_add_executor_job(api.login)
+                state = await hass.async_add_executor_job(api.get_state, device_id)
+                _last_good_state = {**state, "is_connected": True, "offline_since": None}
+                await store.async_save(state)
+                return _last_good_state
+            except Exception as retry_exc:  # noqa: BLE001
+                _LOGGER.warning(
+                    "Zentraly %s: auth retry failed: %s",
+                    device_id,
+                    retry_exc,
+                )
             if _last_good_state:
                 return {**_last_good_state, "is_connected": None}
             raise UpdateFailed(str(exc)) from exc
@@ -236,12 +248,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         update_interval=timedelta(seconds=_scan_interval_seconds(entry)),
     )
 
-    try:
-        await hass.async_add_executor_job(api.login)
-    except ZentralyAuthError as exc:
-        raise ConfigEntryAuthFailed(str(exc)) from exc
-    except ZentralyConnectionError as exc:
-        raise ConfigEntryNotReady(str(exc)) from exc
+    last_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            await hass.async_add_executor_job(api.login)
+            last_error = None
+            break
+        except ZentralyAuthError as exc:
+            raise ConfigEntryAuthFailed(str(exc)) from exc
+        except ZentralyConnectionError as exc:
+            last_error = exc
+            _LOGGER.warning(
+                "Zentraly login attempt %s/3 failed for %s: %s",
+                attempt + 1,
+                email,
+                exc,
+            )
+    if last_error is not None:
+        raise ConfigEntryNotReady(str(last_error)) from last_error
 
     await coordinator.async_config_entry_first_refresh()
 
