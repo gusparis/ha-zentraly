@@ -1,13 +1,28 @@
 """Zentraly switch entities."""
 from __future__ import annotations
 
+import logging
+
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import CONF_DEVICE_ID, CONF_DEVICE_NAME, DOMAIN, is_virtual_off
+from .const import (
+    CONF_DEVICE_ID,
+    CONF_DEVICE_NAME,
+    DEFAULT_ON_TARGET_TEMP,
+    DOMAIN,
+    HVAC_MODE_MANUAL,
+    HVAC_MODE_OFF,
+    MAX_TARGET_TEMP,
+    OFF_TARGET_TEMP,
+    is_virtual_off,
+)
+from .coordinator_util import apply_optimistic_state
+
+_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(
@@ -63,17 +78,52 @@ class ZentralyPowerSwitch(CoordinatorEntity, SwitchEntity):
             state.get("thermostat_mode"),
         )
 
+    async def _revert_after_api_error(self, action: str, error: Exception) -> None:
+        _LOGGER.warning(
+            "Zentraly %s switch %s failed, reverting UI state: %s",
+            self._device_id,
+            action,
+            error,
+        )
+        await self.coordinator.async_request_refresh()
+
+    async def _run_in_background(self, action: str, sync_callable) -> None:
+        try:
+            await self.hass.async_add_executor_job(sync_callable)
+        except Exception as exc:
+            await self._revert_after_api_error(action, exc)
+
     async def async_turn_on(self, **kwargs) -> None:
         restore = (self.coordinator.data or {}).get("target_temp")
+        target = restore
+        if target is None or target <= OFF_TARGET_TEMP or target > MAX_TARGET_TEMP:
+            target = DEFAULT_ON_TARGET_TEMP
+
+        apply_optimistic_state(
+            self.coordinator,
+            target_temp=target,
+            thermostat_mode=HVAC_MODE_MANUAL,
+        )
 
         def _turn_on() -> None:
             self._api.set_power(self._device_id, True, restore_target_temp=restore)
 
-        await self.hass.async_add_executor_job(_turn_on)
-        await self.coordinator.async_request_refresh()
+        self.hass.async_create_task(
+            self._run_in_background("turn_on", _turn_on),
+            name=f"zentraly_switch_on_{self._device_id}",
+        )
 
     async def async_turn_off(self, **kwargs) -> None:
-        await self.hass.async_add_executor_job(
-            self._api.set_power, self._device_id, False
+        apply_optimistic_state(
+            self.coordinator,
+            target_temp=OFF_TARGET_TEMP,
+            thermostat_mode=HVAC_MODE_OFF,
         )
-        await self.coordinator.async_request_refresh()
+
+        def _turn_off() -> None:
+            self._api.set_power(self._device_id, False)
+
+        self.hass.async_create_task(
+            self._run_in_background("turn_off", _turn_off),
+            name=f"zentraly_switch_off_{self._device_id}",
+        )

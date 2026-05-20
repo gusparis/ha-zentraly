@@ -37,6 +37,7 @@ from .const import (
     ATTR_RSSI,
     CONF_DEVICE_ID,
     CONF_DEVICE_NAME,
+    DEFAULT_ON_TARGET_TEMP,
     DOMAIN,
     HVAC_MODE_MANUAL,
     HVAC_MODE_OFF,
@@ -45,24 +46,22 @@ from .const import (
     OFF_TARGET_TEMP,
     is_virtual_off,
 )
+from .coordinator_util import apply_optimistic_state
 
 _LOGGER = logging.getLogger(__name__)
 
-# Mapping: HA HVACMode → Zentraly thermostatMode value
 _HA_TO_ZT: dict[HVACMode, int] = {
     HVACMode.OFF: HVAC_MODE_OFF,
     HVACMode.HEAT: HVAC_MODE_MANUAL,
 }
 
-# Mapping: Zentraly thermostatMode → HA HVACMode
 _ZT_TO_HA: dict[int, HVACMode] = {v: k for k, v in _HA_TO_ZT.items()}
-# Extra modes captured / inferred (will show as HEAT if unknown)
 _ZT_TO_HA.update(
     {
         1: HVACMode.HEAT,
         2: HVACMode.COOL,
         3: HVACMode.AUTO,
-        5: HVACMode.HEAT,  # eco/away → still heat
+        5: HVACMode.HEAT,
     }
 )
 
@@ -92,7 +91,7 @@ class ZentralyClimate(CoordinatorEntity, ClimateEntity):
     """Zentraly WiFi thermostat as a HA climate entity."""
 
     _attr_has_entity_name = True
-    _attr_name = None  # uses device name
+    _attr_name = None
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_hvac_modes = [HVACMode.OFF, HVACMode.HEAT]
     _attr_supported_features = (
@@ -161,8 +160,6 @@ class ZentralyClimate(CoordinatorEntity, ClimateEntity):
         if (away := self._state.get("away_temp")) is not None:
             attrs[ATTR_AWAY_TEMP] = away
 
-        # Connection status — useful for automations and dashboards
-        # is_connected: True = online, False = IoT Hub offline, None = transient error
         connected = self._state.get("is_connected")
         if connected is not None:
             attrs[ATTR_CONNECTED] = connected
@@ -171,8 +168,23 @@ class ZentralyClimate(CoordinatorEntity, ClimateEntity):
 
         return attrs
 
+    async def _revert_after_api_error(self, action: str, error: Exception) -> None:
+        _LOGGER.warning(
+            "Zentraly %s %s failed, reverting UI state: %s",
+            self._device_id,
+            action,
+            error,
+        )
+        await self.coordinator.async_request_refresh()
+
+    async def _run_in_background(self, action: str, sync_callable) -> None:
+        try:
+            await self.hass.async_add_executor_job(sync_callable)
+        except Exception as exc:
+            await self._revert_after_api_error(action, exc)
+
     async def async_set_temperature(self, **kwargs: Any) -> None:
-        """Set target temperature."""
+        """Set target temperature (optimistic UI, cloud command in background)."""
         temp = kwargs.get(ATTR_TEMPERATURE)
         if temp is None:
             return
@@ -180,18 +192,25 @@ class ZentralyClimate(CoordinatorEntity, ClimateEntity):
         if temp <= OFF_TARGET_TEMP:
             await self.async_turn_off()
             return
+
         was_off = is_virtual_off(
             self._state.get("target_temp"),
             self._state.get("thermostat_mode"),
         )
+        optimistic: dict[str, float | int] = {"target_temp": temp}
+        if was_off:
+            optimistic["thermostat_mode"] = HVAC_MODE_MANUAL
+        apply_optimistic_state(self.coordinator, **optimistic)
 
         def _apply() -> None:
             self._api.set_temperature(self._device_id, temp)
             if was_off:
                 self._api.set_hvac_mode(self._device_id, HVAC_MODE_MANUAL)
 
-        await self.hass.async_add_executor_job(_apply)
-        await self.coordinator.async_request_refresh()
+        self.hass.async_create_task(
+            self._run_in_background("set_temperature", _apply),
+            name=f"zentraly_set_temperature_{self._device_id}",
+        )
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set HVAC mode."""
@@ -204,18 +223,38 @@ class ZentralyClimate(CoordinatorEntity, ClimateEntity):
         _LOGGER.warning("Unsupported HVAC mode: %s", hvac_mode)
 
     async def async_turn_on(self) -> None:
-        """Turn on the thermostat (set to manual/heat mode)."""
+        """Turn on the thermostat (optimistic UI)."""
         restore = self._state.get("target_temp")
+        target = restore
+        if target is None or target <= OFF_TARGET_TEMP or target > MAX_TARGET_TEMP:
+            target = DEFAULT_ON_TARGET_TEMP
+
+        apply_optimistic_state(
+            self.coordinator,
+            target_temp=target,
+            thermostat_mode=HVAC_MODE_MANUAL,
+        )
 
         def _turn_on() -> None:
             self._api.set_power(self._device_id, True, restore_target_temp=restore)
 
-        await self.hass.async_add_executor_job(_turn_on)
-        await self.coordinator.async_request_refresh()
+        self.hass.async_create_task(
+            self._run_in_background("turn_on", _turn_on),
+            name=f"zentraly_turn_on_{self._device_id}",
+        )
 
     async def async_turn_off(self) -> None:
-        """Turn off the thermostat."""
-        await self.hass.async_add_executor_job(
-            self._api.set_power, self._device_id, False
+        """Turn off the thermostat (optimistic UI)."""
+        apply_optimistic_state(
+            self.coordinator,
+            target_temp=OFF_TARGET_TEMP,
+            thermostat_mode=HVAC_MODE_OFF,
         )
-        await self.coordinator.async_request_refresh()
+
+        def _turn_off() -> None:
+            self._api.set_power(self._device_id, False)
+
+        self.hass.async_create_task(
+            self._run_in_background("turn_off", _turn_off),
+            name=f"zentraly_turn_off_{self._device_id}",
+        )
