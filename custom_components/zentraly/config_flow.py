@@ -11,7 +11,18 @@ from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
 
 from .api import ZentralyAPI, ZentralyAuthError, ZentralyConnectionError
-from .const import CONF_DEVICE_ID, CONF_DEVICE_NAME, CONF_EMAIL, CONF_PASSWORD, DOMAIN
+from .const import (
+    CONF_DEVICE_ID,
+    CONF_DEVICE_NAME,
+    CONF_EMAIL,
+    CONF_PASSWORD,
+    CONF_PROACTIVE_RESET,
+    CONF_SCAN_INTERVAL,
+    DEFAULT_SCAN_INTERVAL,
+    DOMAIN,
+    MAX_SCAN_INTERVAL,
+    MIN_SCAN_INTERVAL,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -36,10 +47,47 @@ async def validate_and_get_devices(hass: HomeAssistant, data: dict) -> list[dict
     return devices
 
 
+class ZentralyOptionsFlow(config_entries.OptionsFlow):
+    """Handle Zentraly integration options."""
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Manage polling and optional proactive device reset."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        entry = self.config_entry
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(
+                        CONF_SCAN_INTERVAL,
+                        default=entry.options.get(
+                            CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
+                        ),
+                    ): vol.All(vol.Coerce(int), vol.Range(min=MIN_SCAN_INTERVAL, max=MAX_SCAN_INTERVAL)),
+                    vol.Optional(
+                        CONF_PROACTIVE_RESET,
+                        default=entry.options.get(CONF_PROACTIVE_RESET, False),
+                    ): bool,
+                }
+            ),
+        )
+
+
 class ZentralyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Zentraly."""
 
     VERSION = 1
+
+    @staticmethod
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> ZentralyOptionsFlow:
+        """Return the options flow handler."""
+        return ZentralyOptionsFlow()
 
     def __init__(self) -> None:
         self._devices: list[dict] = []

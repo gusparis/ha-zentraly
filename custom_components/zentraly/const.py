@@ -7,9 +7,19 @@ LOGIN_URL = f"{BASE_URL}/Login"
 APP_URL = f"{BASE_URL}/App"
 IOT_COMMAND_URL = f"{BASE_URL}/IOTCommand/Run"
 
-DEFAULT_SCAN_INTERVAL = 300  # seconds (5 min) — less frequent polling prevents
-                             # ESP32 WiFi stack crashes from constant MQTT load
-COMMAND_TIMEOUT = 15000  # ms, sent to the thermostat
+DEFAULT_SCAN_INTERVAL = 600
+MIN_SCAN_INTERVAL = 180
+MAX_SCAN_INTERVAL = 1800
+SESSION_KEEPALIVE_MINUTES = 10
+JWT_REFRESH_MINUTES = 10
+COMMAND_TIMEOUT = 15000
+
+CONF_SCAN_INTERVAL = "scan_interval"
+CONF_PROACTIVE_RESET = "proactive_reset"
+PROACTIVE_RESET_INTERVAL_HOURS = 11
+
+OFFLINE_RESET_THRESHOLD_MINUTES = 30
+MIN_RESET_INTERVAL_HOURS = 4
 
 # thermostatMode values observed via MITM
 HVAC_MODE_OFF = 0
@@ -21,6 +31,10 @@ HVAC_MODE_ECO = 5        # eco/away
 
 # Temperature encoding: API uses centidegrees (16.0°C → 1600)
 TEMP_SCALE = 100
+MIN_TARGET_TEMP = 5.0
+MAX_TARGET_TEMP = 30.0
+OFF_TARGET_TEMP = 4.0
+DEFAULT_ON_TARGET_TEMP = 20.0
 
 CONF_EMAIL = "email"
 CONF_PASSWORD = "password"

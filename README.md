@@ -12,8 +12,10 @@ Supports reading temperature, humidity, and boiler state, as well as setting the
 ## Features
 
 - Current room temperature and humidity
-- Target temperature control (5 °C – 35 °C, 0.5 °C steps)
-- HVAC modes: **Heat** / **Off**
+- Target temperature control (5 °C – 30 °C, 0.5 °C steps, same as the app)
+- Humidity sensor entity
+- Power switch and HVAC modes: **Heat** / **Off** (matches app on/off behaviour)
+- Zentraly branding in Home Assistant UI
 - Extra attributes: WiFi signal (RSSI), firmware version, boiler output state
 - Auto-discovers all thermostats linked to your account
 - Token-based auth with automatic re-login
@@ -45,6 +47,18 @@ Supports reading temperature, humidity, and boiler state, as well as setting the
 Go to **Settings → Devices & Integrations → Add Integration → Zentraly**.
 
 Enter your Zentraly account email and password. The integration will discover all thermostats linked to your account.
+
+### WiFi stability (important)
+
+The thermostat firmware (ESP32 + Azure IoT Hub) is sensitive to how often it is contacted from the cloud. This integration defaults to **gentle** behaviour:
+
+- Poll every **10 minutes** (configurable under integration **Options**)
+- Keep the Zentraly cloud session alive with a background login every 10 minutes (no device reboot)
+- **No automatic device reset** unless you enable it in Options
+
+If a thermostat still drops off Azure IoT Hub after about **12 hours** (WiFi LED blinking, `connected: false` in HA), enable **Proactive device reset** in Options — that reboots the unit every 11 hours to refresh the IoT SAS token. Only use that if you need it; frequent reboots can make WiFi look unstable.
+
+Avoid running the official Zentraly app on the same account at the same time as Home Assistant if you see disconnects.
 
 ---
 

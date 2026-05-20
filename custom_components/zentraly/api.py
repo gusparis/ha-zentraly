@@ -27,8 +27,15 @@ from typing import Optional
 
 from .const import (
     COMMAND_TIMEOUT,
+    DEFAULT_ON_TARGET_TEMP,
+    HVAC_MODE_MANUAL,
+    HVAC_MODE_OFF,
     IOT_COMMAND_URL,
+    JWT_REFRESH_MINUTES,
     LOGIN_URL,
+    MAX_TARGET_TEMP,
+    MIN_TARGET_TEMP,
+    OFF_TARGET_TEMP,
     TEMP_SCALE,
 )
 
@@ -132,7 +139,7 @@ class ZentralyAPI:
         self._token = token_raw
         self._login_data = io_data  # cache for device discovery
         # JWT expires in ~100 years based on captured token (exp: 2121297637)
-        self._token_expires = datetime.now() + timedelta(minutes=20)
+        self._token_expires = datetime.now() + timedelta(minutes=JWT_REFRESH_MINUTES)
         return result
 
     def _auth_token_header(self) -> str:
@@ -294,6 +301,23 @@ class ZentralyAPI:
         """Set thermostatMode (0=off, 4=manual/heat, etc.)."""
         _LOGGER.debug("set_hvac_mode %s → mode %d", device_id, mode)
         self._set_config(device_id, {"thermostatMode": mode})
+
+    def set_power(self, device_id: str, on: bool, *, restore_target_temp: float | None = None) -> None:
+        """Turn the thermostat on or off like the Zentraly app.
+
+        Off: thermostatMode 0 and target below 5 °C (manual spec).
+        On: manual mode with target restored or 20 °C default.
+        """
+        if on:
+            target = restore_target_temp
+            if target is None or target < MIN_TARGET_TEMP or target > MAX_TARGET_TEMP:
+                target = DEFAULT_ON_TARGET_TEMP
+            self.set_temperature(device_id, target)
+            self.set_hvac_mode(device_id, HVAC_MODE_MANUAL)
+            return
+
+        self.set_hvac_mode(device_id, HVAC_MODE_OFF)
+        self.set_temperature(device_id, OFF_TARGET_TEMP)
 
     def reset_device(self, device_id: str) -> bool:
         """Send a reset command to the device.

@@ -67,4 +67,3 @@ class ZentralyResetButton(ButtonEntity):
             self._device_id,
             "accepted — device will be offline ~30 s" if accepted else "not confirmed by backend",
         )
-        await self._coordinator.async_request_refresh()

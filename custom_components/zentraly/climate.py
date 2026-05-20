@@ -40,6 +40,8 @@ from .const import (
     DOMAIN,
     HVAC_MODE_MANUAL,
     HVAC_MODE_OFF,
+    MAX_TARGET_TEMP,
+    MIN_TARGET_TEMP,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -96,8 +98,8 @@ class ZentralyClimate(CoordinatorEntity, ClimateEntity):
         | ClimateEntityFeature.TURN_ON
         | ClimateEntityFeature.TURN_OFF
     )
-    _attr_min_temp = 5.0
-    _attr_max_temp = 35.0
+    _attr_min_temp = MIN_TARGET_TEMP
+    _attr_max_temp = MAX_TARGET_TEMP
     _attr_target_temperature_step = 0.5
 
     def __init__(
@@ -167,26 +169,36 @@ class ZentralyClimate(CoordinatorEntity, ClimateEntity):
         temp = kwargs.get(ATTR_TEMPERATURE)
         if temp is None:
             return
+        temp = max(MIN_TARGET_TEMP, min(MAX_TARGET_TEMP, float(temp)))
         await self.hass.async_add_executor_job(
             self._api.set_temperature, self._device_id, temp
         )
-        await self.coordinator.async_request_refresh()
+        if self.hvac_mode == HVACMode.OFF:
+            await self.hass.async_add_executor_job(
+                self._api.set_hvac_mode, self._device_id, HVAC_MODE_MANUAL
+            )
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set HVAC mode."""
-        zt_mode = _HA_TO_ZT.get(hvac_mode)
-        if zt_mode is None:
-            _LOGGER.warning("Unsupported HVAC mode: %s", hvac_mode)
+        if hvac_mode == HVACMode.OFF:
+            await self.async_turn_off()
             return
-        await self.hass.async_add_executor_job(
-            self._api.set_hvac_mode, self._device_id, zt_mode
-        )
-        await self.coordinator.async_request_refresh()
+        if hvac_mode == HVACMode.HEAT:
+            await self.async_turn_on()
+            return
+        _LOGGER.warning("Unsupported HVAC mode: %s", hvac_mode)
 
     async def async_turn_on(self) -> None:
         """Turn on the thermostat (set to manual/heat mode)."""
-        await self.async_set_hvac_mode(HVACMode.HEAT)
+        restore = self._state.get("target_temp")
+
+        def _turn_on() -> None:
+            self._api.set_power(self._device_id, True, restore_target_temp=restore)
+
+        await self.hass.async_add_executor_job(_turn_on)
 
     async def async_turn_off(self) -> None:
         """Turn off the thermostat."""
-        await self.async_set_hvac_mode(HVACMode.OFF)
+        await self.hass.async_add_executor_job(
+            self._api.set_power, self._device_id, False
+        )
